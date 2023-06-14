@@ -1,14 +1,118 @@
+use std::cmp::Ordering;
 use std::collections::HashSet;
-use std::fs;
-use std::{env, process::exit};
+use std::{env, fs, process::exit};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, EnumIter)]
 enum CommandOptions {
     NumberNonBlank,
     ShowEnds,
     Number,
     ShowTabs,
     Help,
+}
+
+enum CommandPriority {
+    LOW,
+    MIDDLE,
+    HIGH,
+}
+
+struct CommandStruct {
+    name: String,
+    commands: Vec<String>,
+    description: String,
+    priority: CommandPriority,
+}
+
+impl CommandPriority {
+    fn value(&self) -> u8 {
+        match self {
+            CommandPriority::LOW => 0,
+            CommandPriority::MIDDLE => 1,
+            CommandPriority::HIGH => 2,
+        }
+    }
+}
+
+impl CommandOptions {
+    fn value(&self) -> CommandStruct {
+        let sf = String::from;
+        match self {
+            CommandOptions::Help => CommandStruct {
+                name: sf("Help"),
+                commands: vec![sf("-h"), sf("--help")],
+                description: sf("display this help and exit"),
+                priority: CommandPriority::LOW,
+            },
+            CommandOptions::ShowEnds => CommandStruct {
+                name: sf("ShowEnds"),
+                commands: vec![sf("-E"), sf("--show-ends")],
+                description: sf("display $ at end of each line"),
+                priority: CommandPriority::LOW,
+            },
+            CommandOptions::ShowTabs => CommandStruct {
+                name: sf("ShowTabs"),
+                commands: vec![sf("-T"), sf("--show-tabs")],
+                description: sf("display TAB characters as ^I"),
+                priority: CommandPriority::LOW,
+            },
+            CommandOptions::Number => CommandStruct {
+                name: sf("Number"),
+                commands: vec![sf("-n"), sf("--number")],
+                description: sf("number all output lines"),
+                priority: CommandPriority::MIDDLE,
+            },
+            CommandOptions::NumberNonBlank => CommandStruct {
+                name: sf("NumberNonBlank"),
+                commands: vec![sf("-b"), sf("--number-nonblank")],
+                description: sf("number nonblank output lines"),
+                priority: CommandPriority::HIGH,
+            },
+        }
+    }
+
+    fn help() -> () {
+        println!("Usage: cat [OPTION]... [FILE]...");
+        println!("Concatenate FILE(s), or standard input, to standard output.\n");
+        println!("With no FILE, or when FILE is -, read standard input\n");
+
+        let max_len =
+            CommandOptions::iter().fold(0, |acc, option| match option.value().commands.last() {
+                Some(s) => match s.len().cmp(&acc) {
+                    Ordering::Greater => s.len(),
+                    _ => acc,
+                },
+                None => {
+                    eprintln!(
+                        "ERROR: Theres no commands for {}. Please provide at least 1 command",
+                        option.value().name
+                    );
+                    exit(1)
+                }
+            });
+
+        let default_space = 10;
+
+        for option in CommandOptions::iter() {
+            let option_val = option.value();
+            let space = (max_len + default_space) - option_val.commands.last().unwrap().len();
+            println!(
+                "  {command}{:space$}{description}",
+                "",
+                space = space,
+                command = option_val.commands.join(", "),
+                description = option_val.description
+            )
+        }
+
+        exit(1)
+    }
+
+    fn priority(&self) -> u8 {
+        self.value().priority.value()
+    }
 }
 
 impl TryFrom<&str> for CommandOptions {
@@ -30,52 +134,15 @@ impl TryFrom<&str> for CommandOptions {
     }
 }
 
-impl CommandOptions {
-    fn help() -> () {
-        println!("Usage: cat [OPTION]... [FILE]...");
-        println!("Concatenate FILE(s), or standard input, to standard output.\n");
-        println!("With no FILE, or when FILE is -, read standard input\n");
-
-        let commands = ["ShowEnds", "Number", "Help"];
-
-        fn make_command_string(command: &str, description: &str) -> String {
-            format!("{command}\t\t{description}")
-        }
-
-        for command in commands {
-            match command {
-                command if command == "ShowEnds" => println!(
-                    "{str}",
-                    str = make_command_string("-E, --show-ends", "display $ at end of each line")
-                ),
-                command if command == "Number" => println!(
-                    "{str}",
-                    str = make_command_string("-n, --number", "number all output lines")
-                ),
-                command if command == "Help" => println!(
-                    "{str}",
-                    str = make_command_string("-h, --help", "display this help and exit")
-                ),
-                &_ => unreachable!("Please implement command: '{command}' or remove it"),
-            }
-        }
-
-        exit(1)
-    }
-
-    fn weight(&self) -> u32 {
-        match self {
-            CommandOptions::NumberNonBlank => 0,
-            CommandOptions::ShowEnds => 1,
-            CommandOptions::ShowTabs => 2,
-            CommandOptions::Number => 3,
-            CommandOptions::Help => 4,
-        }
-    }
-}
 
 fn read_args() -> (Vec<CommandOptions>, Vec<String>) {
     let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        eprintln!("ERROR: You should specify at least path to a file");
+        exit(1)
+    }
+
     let mut options: HashSet<CommandOptions> = HashSet::new();
     let mut file_paths: Vec<String> = vec![];
     let mut i = 1;
@@ -98,7 +165,7 @@ fn read_args() -> (Vec<CommandOptions>, Vec<String>) {
 
     let mut options = Vec::from_iter(options);
 
-    options.sort_by(|x, y| x.weight().cmp(&y.weight()));
+    options.sort_by(|x, y| x.priority().cmp(&y.priority()));
 
     for j in i..args.len() {
         file_paths.push(args[j].clone());
@@ -157,8 +224,8 @@ fn process_string(mut str: String, options: &Vec<CommandOptions>) -> String {
                         format!("{index} {s}\n")
                     })
                     .collect();
-            },
-            CommandOptions::Help => continue
+            }
+            CommandOptions::Help => continue,
         };
     }
     str
